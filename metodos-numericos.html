@@ -189,6 +189,11 @@ code { font-family: var(--code); font-size: .92em; background: var(--sheet-2); b
 .seg button { border: 0; background: transparent; padding: 7px 12px; font-weight: 550; font-size: 14px; color: var(--ink-2); cursor: pointer; }
 .seg button + button { border-left: 1px solid var(--rule-2); }
 .seg button[aria-checked="true"] { background: var(--ink); color: var(--paper); }
+@media (max-width: 640px) {
+  .seg { flex-wrap: wrap; gap: 1px; background: var(--rule-2); }
+  .seg button { flex: 1 1 auto; background: var(--sheet); }
+  .seg button + button { border-left: 0; }
+}
 
 .syntax { margin-top: 14px; font-size: 14px; color: var(--ink-2); }
 .syntax summary { cursor: pointer; width: max-content; max-width: 100%; color: var(--ink); font-weight: 550; }
@@ -633,12 +638,13 @@ body:not([data-topic="int"]) [data-topic-only="int"], body[data-topic="int"] [da
         <p class="msg" data-msg="maxIter"></p>
       </div>
       <div class="fld">
-        <span class="lbl" id="lbl-err">Criterio de parada (los cuatro errores se calculan siempre)</span>
+        <span class="lbl" id="lbl-err">Criterio de parada (los cinco errores se calculan siempre)</span>
         <div class="seg" role="radiogroup" aria-labelledby="lbl-err">
           <button type="button" role="radio" data-err="abs">Absoluto</button>
           <button type="button" role="radio" data-err="rel">Relativo</button>
           <button type="button" role="radio" data-err="rel1">Relativo a xₙ₋₁</button>
           <button type="button" role="radio" data-err="fx">|f(xₙ)|</button>
+          <button type="button" role="radio" data-err="cond">Condición</button>
         </div>
         <p class="hint" id="err-def"></p>
       </div>
@@ -862,7 +868,7 @@ body:not([data-topic="int"]) [data-topic-only="int"], body[data-topic="int"] [da
         <p class="msg" data-smsg="maxIter"></p>
       </div>
       <div class="fld">
-        <label for="sis-err">Criterio de parada (los cinco errores se calculan siempre)</label>
+        <label for="sis-err">Criterio de parada (los siete errores se calculan siempre)</label>
         <select id="sis-err" class="inp sis-err"></select>
         <p class="hint" id="sis-err-def"></p>
       </div>
@@ -1377,23 +1383,37 @@ const Core = (() => {
   }
 
   /* ------------------------------ Métodos ------------------------------ */
-  /* Los cuatro errores del informe, calculados en cada iteración:
+  /* Los cinco errores del informe, calculados en cada iteración:
        ea  = |xₙ − xₙ₋₁|              (absoluto)
        er  = |xₙ − xₙ₋₁| / |xₙ|       (relativo)
        er1 = |xₙ − xₙ₋₁| / |xₙ₋₁|     (relativo respecto a xₙ₋₁)
        ef  = |f(xₙ)|                   (residuo)
+       ec  = |f(xₙ)| / |f′(xₙ)|        (de condición)
+     El error de condición usa el número de condición de una raíz simple,
+     κ = 1/|f′(x*)|: un residuo |f(xₙ)| equivale a un error en x de cerca de
+     κ·|f(xₙ)|. Si f′(xₙ) = 0 (raíz múltiple o punto crítico), κ es infinito.
      El criterio de parada E es uno de ellos, el que elija el usuario. */
-  const ERR_KEY = { abs: 'ea', rel: 'er', rel1: 'er1', fx: 'ef' };
+  const ERR_KEY = { abs: 'ea', rel: 'er', rel1: 'er1', fx: 'ef', cond: 'ec' };
 
-  function allErrors(xn, xp, fx) {
+  function condError(fx, dfx) {
+    if (!Number.isFinite(fx) || !Number.isFinite(dfx)) return null;
+    if (fx === 0) return 0;
+    return dfx === 0 ? Infinity : Math.abs(fx) / Math.abs(dfx);
+  }
+
+  // dfx es f′(xₙ); los métodos que no usan derivada la reciben solo para el error de condición
+  function allErrors(xn, xp, fx, dfx) {
     const d = xp === null || xp === undefined ? null : Math.abs(xn - xp);
     return {
       ea: d,
       er: d === null || xn === 0 ? null : d / Math.abs(xn),
       er1: d === null || xp === 0 ? null : d / Math.abs(xp),
       ef: Number.isFinite(fx) ? Math.abs(fx) : null,
+      ec: condError(fx, dfx),
+      dfc: Number.isFinite(dfx) ? dfx : null,
     };
   }
+  const dAt = (df, x) => (df ? df(x) : NaN);
 
   // Devuelve el error que se usa como criterio de parada. Si el relativo no se
   // puede calcular porque el denominador es 0, se usa el absoluto y se avisa.
@@ -1415,7 +1435,7 @@ const Core = (() => {
     const last = R.rows[R.rows.length - 1];
     if (last && status !== 'error' && status !== 'diverged') {
       R.root = last.x; R.froot = last.fx; R.error = last.E;
-      R.errs = { ea: last.ea, er: last.er, er1: last.er1, ef: last.ef };
+      R.errs = { ea: last.ea, er: last.er, er1: last.er1, ef: last.ef, ec: last.ec };
     }
     if (status === 'converged' || status === 'exact') R.order = estimateOrder(R.rows.map((r) => r.x));
     if (R.extra.relFallback) R.message += ' En alguna iteración el denominador del error relativo fue 0; allí se usó el error absoluto.';
@@ -1455,7 +1475,7 @@ const Core = (() => {
   const msgMaxIter = (N, E) => `${N === 1 ? 'Se hizo la única iteración permitida' : `Se alcanzaron las ${N} iteraciones`} sin cumplir la tolerancia${E !== null && E !== undefined ? ` (último E = ${sci(E)})` : ''}. Aumente el máximo de iteraciones o revise los datos.`;
 
   /* Bisección y regla falsa: comparten estructura, cambia cómo se elige xₘ */
-  function bracketing(kind, { f, a, b, tol, maxIter, errType }) {
+  function bracketing(kind, { f, df, a, b, tol, maxIter, errType }) {
     const R = newResult(kind);
     const E = criterion(errType, R);
     if (!(a < b)) return finish(R, 'error', 'El intervalo debe cumplir a &lt; b.');
@@ -1475,7 +1495,7 @@ const Core = (() => {
         ? a + (b - a) / 2                       // punto medio (forma estable)
         : b - (fb * (b - a)) / (fb - fa);       // corte de la cuerda con el eje x
       const fx = f(x);
-      const e = allErrors(x, prev, fx);
+      const e = allErrors(x, prev, fx, dAt(df, x));
       const err = E(e);
       R.rows.push({ i, a, b, fa, fb, x, fx, ...e, E: err });
       R.iterations = i;
@@ -1488,7 +1508,7 @@ const Core = (() => {
         }
         let msg = msgConverged(i, err, tol);
         // en regla falsa un extremo puede quedar fijo: los pasos se achican aunque la raíz siga lejos
-        if (kind === 'regla-falsa' && stuck >= 3 && errType !== 'fx') {
+        if (kind === 'regla-falsa' && stuck >= 3 && errType !== 'fx' && errType !== 'cond') {
           msg += ' Ojo: el mismo extremo del intervalo quedó fijo en las últimas iteraciones, así que el paso entre aproximaciones puede subestimar el error real. Compare con E<sub>f</sub> = |f(x)|.';
         }
         return finish(R, 'converged', msg);
@@ -1507,7 +1527,7 @@ const Core = (() => {
   const falsePosition = (o) => bracketing('regla-falsa', o);
 
   /* Punto fijo: xₙ₊₁ = g(xₙ) */
-  function fixedPoint({ f, g, gp, x0, tol, maxIter, errType }) {
+  function fixedPoint({ f, df, g, gp, x0, tol, maxIter, errType }) {
     const R = newResult('punto-fijo');
     const E = criterion(errType, R);
     const gpNote = (x) => {
@@ -1523,7 +1543,7 @@ const Core = (() => {
     let x = x0, gx = g(x0);
     if (!Number.isFinite(gx)) return finish(R, 'error', `g(x) no está definida (o no es real) en x₀ = ${short(x0)}.`);
     const f0 = f(x);
-    R.rows.push({ i: 0, x, gx, fx: f0, ...allErrors(x, null, f0), E: null });
+    R.rows.push({ i: 0, x, gx, fx: f0, ...allErrors(x, null, f0, dAt(df, x)), E: null });
     if (f0 === 0) return finish(R, 'exact', 'x₀ ya es una raíz exacta: f(x₀) = 0.');
 
     for (let i = 1; i <= maxIter; i++) {
@@ -1531,7 +1551,7 @@ const Core = (() => {
       if (!Number.isFinite(xn) || Math.abs(xn) > BIG) {
         return finish(R, 'diverged', `Las iteraciones divergen: |x${sub(i)}| crece sin control.${gpNote(x)}`);
       }
-      const gn = g(xn), fn = f(xn), e = allErrors(xn, x, fn), err = E(e);
+      const gn = g(xn), fn = f(xn), e = allErrors(xn, x, fn, dAt(df, xn)), err = E(e);
       R.rows.push({ i, x: xn, gx: gn, fx: fn, ...e, E: err });
       R.iterations = i;
       if (fn === 0) { if (gp) R.extra.gp = Math.abs(gp(xn)); return finish(R, 'exact', `Raíz exacta: f(x${sub(i)}) = 0 en la iteración ${i}.`); }
@@ -1543,16 +1563,16 @@ const Core = (() => {
   }
 
   /* Secante: xₙ₊₁ = xₙ − f(xₙ)(xₙ − xₙ₋₁) / (f(xₙ) − f(xₙ₋₁)) */
-  function secant({ f, x0, x1, tol, maxIter, errType }) {
+  function secant({ f, df, x0, x1, tol, maxIter, errType }) {
     const R = newResult('secante');
     const E = criterion(errType, R);
     if (x0 === x1) return finish(R, 'error', 'x₀ y x₁ deben ser distintos.');
     let f0 = f(x0), f1 = f(x1);
     if (!Number.isFinite(f0)) return finish(R, 'error', `f(x) no está definida (o no es real) en x₀ = ${short(x0)}.`);
     if (!Number.isFinite(f1)) return finish(R, 'error', `f(x) no está definida (o no es real) en x₁ = ${short(x1)}.`);
-    R.rows.push({ i: 0, x: x0, fx: f0, ...allErrors(x0, null, f0), E: null });
+    R.rows.push({ i: 0, x: x0, fx: f0, ...allErrors(x0, null, f0, dAt(df, x0)), E: null });
     if (f0 === 0) return finish(R, 'exact', 'x₀ ya es una raíz exacta: f(x₀) = 0.');
-    R.rows.push({ i: 1, x: x1, fx: f1, ...allErrors(x1, x0, f1), E: null });
+    R.rows.push({ i: 1, x: x1, fx: f1, ...allErrors(x1, x0, f1, dAt(df, x1)), E: null });
     if (f1 === 0) return finish(R, 'exact', 'x₁ ya es una raíz exacta: f(x₁) = 0.');
 
     for (let k = 1; k <= maxIter; k++) {
@@ -1561,7 +1581,7 @@ const Core = (() => {
       if (den === 0) return finish(R, 'error', `f(x${sub(i - 1)}) = f(x${sub(i - 2)}): la secante es horizontal y no corta el eje x. Pruebe otros valores iniciales.`);
       const x2 = x1 - (f1 * (x1 - x0)) / den;
       if (!Number.isFinite(x2) || Math.abs(x2) > BIG) return finish(R, 'diverged', `Las iteraciones divergen en la iteración ${k}: |x${sub(i)}| crece sin control.`);
-      const f2 = f(x2), e = allErrors(x2, x1, f2), err = E(e);
+      const f2 = f(x2), e = allErrors(x2, x1, f2, dAt(df, x2)), err = E(e);
       R.rows.push({ i, x: x2, fx: f2, ...e, E: err });
       R.iterations = k;
       if (!Number.isFinite(f2)) return finish(R, 'error', `f(x) no está definida (o no es real) en x${sub(i)} = ${short(x2)}.`);
@@ -1583,7 +1603,7 @@ const Core = (() => {
     let x = x0, fx = f(x0), dfx = df(x0), d2x = n2 ? d2f(x0) : undefined;
     const f0 = fx;
     if (!Number.isFinite(fx)) return finish(R, 'error', `f(x) no está definida (o no es real) en x₀ = ${short(x0)}.`);
-    R.rows.push({ i: 0, x, fx, dfx, d2fx: d2x, ...allErrors(x, null, fx), E: null });
+    R.rows.push({ i: 0, x, fx, dfx, d2fx: d2x, ...allErrors(x, null, fx, dfx), E: null });
     if (fx === 0) return finish(R, 'exact', 'x₀ ya es una raíz exacta: f(x₀) = 0.');
 
     for (let i = 1; i <= maxIter; i++) {
@@ -1601,7 +1621,7 @@ const Core = (() => {
       }
       if (!Number.isFinite(xn) || Math.abs(xn) > BIG) return finish(R, 'diverged', `Las iteraciones divergen en la iteración ${i}: |x${sub(i)}| crece sin control.`);
       const fn = f(xn), dn = df(xn), d2n = n2 ? d2f(xn) : undefined;
-      const e = allErrors(xn, x, fn), err = E(e);
+      const e = allErrors(xn, x, fn, dn), err = E(e);
       R.rows.push({ i, x: xn, fx: fn, dfx: dn, d2fx: d2n, ...e, E: err });
       R.iterations = i;
       if (!Number.isFinite(fn)) return finish(R, 'error', `f(x) no está definida (o no es real) en x${sub(i)} = ${short(xn)}.`);
@@ -1656,12 +1676,13 @@ if (typeof module !== 'undefined') module.exports = Core;
   const isBracket = (m) => m === 'biseccion' || m === 'regla-falsa';
   const isNewton = (m) => m === 'newton' || m === 'newton-n1' || m === 'newton-n2';
 
-  // Los cuatro errores del análisis comparativo (k es el campo de cada fila del núcleo)
+  // Los cinco errores del análisis comparativo (k es el campo de cada fila del núcleo)
   const ERRS = [
     { id: 'abs', k: 'ea', name: 'Error absoluto', sym: '<i>E</i><sub>abs</sub>', def: `|${xi('n')} − ${xi('n−1')}|` },
     { id: 'rel', k: 'er', name: 'Error relativo', sym: '<i>E</i><sub>rel</sub>', def: F(`|${xi('n')} − ${xi('n−1')}|`, `|${xi('n')}|`) },
     { id: 'rel1', k: 'er1', name: 'Error relativo respecto a xₙ₋₁', sym: '<i>E</i><sub>rel,n−1</sub>', def: F(`|${xi('n')} − ${xi('n−1')}|`, `|${xi('n−1')}|`) },
     { id: 'fx', k: 'ef', name: 'Error en f (residuo)', sym: '<i>E</i><sub>f</sub>', def: `|<i>f</i>(${xi('n')})|` },
+    { id: 'cond', k: 'ec', name: 'Error de condición', sym: '<i>E</i><sub>cond</sub>', def: F(`|<i>f</i>(${xi('n')})|`, `|<i>f</i>′(${xi('n')})|`) },
   ];
   const ERR_IDS = ERRS.map((e) => e.id);
   const critErr = () => ERRS.find((e) => e.id === state.errType) || ERRS[0];
@@ -1769,7 +1790,7 @@ if (typeof module !== 'undefined') module.exports = Core;
     ],
   };
   COLS['newton-n1'] = COLS.newton;
-  // Todas las tablas terminan con las columnas de los cuatro errores
+  // Todas las tablas terminan con las columnas de los cinco errores
   const ERR_COLS = ERRS.map((e, j) => ({ h: e.sym, v: (r) => C.sci(r[e.k]), err: e, grp: j === 0 }));
   const colsFor = (m) => [...(isBracket(m) ? COLS.bracket : COLS[m]), ...ERR_COLS];
 
@@ -1846,8 +1867,11 @@ if (typeof module !== 'undefined') module.exports = Core;
     setMsg('dec', decOk ? '' : 'Use un entero entre 0 y 15.');
     const dec = decOk ? Number(rawDec) : 10;
 
+    // f′ para el error de condición |f(xₙ)| / |f′(xₙ)| en todos los métodos (simbólica, con respaldo numérico)
+    let dfc = null;
+    if (f.ok) { const d = C.derive(f.node); dfc = d.ok ? d.fn : C.numDeriv(f.fn); }
     return {
-      f, dec, errType: state.errType,
+      f, dfc, dec, errType: state.errType,
       tol: tol.ok ? tol.value : null,
       maxIter: maxOk ? mi : null,
       ok: f.ok && tol.ok && maxOk,
@@ -1862,7 +1886,7 @@ if (typeof module !== 'undefined') module.exports = Core;
       if (!r.ok) out.ok = false;
       return r.ok ? r.value : null;
     };
-    const common = { f: ctx.f.ok ? ctx.f.fn : null, tol: ctx.tol, maxIter: ctx.maxIter, errType: ctx.errType };
+    const common = { f: ctx.f.ok ? ctx.f.fn : null, df: ctx.dfc, tol: ctx.tol, maxIter: ctx.maxIter, errType: ctx.errType };
 
     if (isBracket(m)) {
       const a = num('a', 'a'), b = num('b', 'b');
@@ -2027,7 +2051,7 @@ if (typeof module !== 'undefined') module.exports = Core;
   }
 
   /* ----------------------------- Tabla ----------------------------- */
-  // Tabla de iteraciones con los cuatro errores; la columna del criterio se marca
+  // Tabla de iteraciones con los cinco errores; la columna del criterio se marca
   function tableHTML(m, ctx, res) {
     const cols = colsFor(m), ce = critErr();
     const last = res.rows.length - 1, good = isGood(res);
@@ -2224,10 +2248,12 @@ if (typeof module !== 'undefined') module.exports = Core;
     // si el relativo no se pudo calcular (denominador 0), el núcleo usó el absoluto
     const fellBack = (t === 'rel' || t === 'rel1') && r[ce.k] === null;
     const sym = t === 'fx' ? `|<i>f</i>(${cur})|`
+      : t === 'cond' ? F(`|<i>f</i>(${cur})|`, `|<i>f</i>′(${cur})|`)
       : t === 'rel' && !fellBack ? F(`|${cur} − ${prv}|`, `|${cur}|`)
         : t === 'rel1' && !fellBack ? F(`|${cur} − ${prv}|`, `|${prv}|`)
           : `|${cur} − ${prv}|`;
     const numF = t === 'fx' ? `|${C.short(r.fx)}|`
+      : t === 'cond' ? F(`|${C.short(r.fx)}|`, `|${C.short(r.dfc)}|`)
       : t === 'rel' && !fellBack ? F(absNum, `|${C.short(r.x)}|`)
         : t === 'rel1' && !fellBack ? F(absNum, `|${C.short(prev.x)}|`)
           : absNum;
@@ -2237,7 +2263,7 @@ if (typeof module !== 'undefined') module.exports = Core;
     const verdict = ok ? `E &lt; tol = ${tolTxt}: se cumple el criterio de parada.`
       : last && res.status === 'maxiter' ? `E ≥ tol = ${tolTxt}, pero ya no quedan iteraciones.`
         : last ? `E ≥ tol = ${tolTxt}.` : `E ≥ tol = ${tolTxt}: se sigue con el próximo paso.`;
-    return `<div class="d-line"><i>E</i> = ${sym} = ${numF} = ${C.sci(r.E)}</div><p class="d-note">${verdict}${fellBack ? ' (El denominador del error relativo es 0, así que se usó el absoluto).' : ''}</p>${others}`;
+    return `<div class="d-line"><i>E</i> = ${sym} = ${numF} = ${C.sci(r.E)}</div><p class="d-note">${verdict}${fellBack ? ' (El denominador del error relativo es 0, así que se usó el absoluto).' : ''}${t === 'cond' && r.E === Infinity ? ' Como f′ = 0 en este punto, el número de condición es infinito: el residuo no indica qué tan cerca está la raíz.' : ''}</p>${others}`;
   }
 
   function endNote(res, ctx) {
@@ -2706,12 +2732,12 @@ if (typeof module !== 'undefined') module.exports = Core;
     // los valores iniciales (sin paso anterior) no entran a la gráfica
     const pts = res ? res.rows.filter((r, idx) => {
       const v = r[key];
-      return v !== null && v > 0 && Number.isFinite(v) && (key !== 'ef' || r.E !== null || (isBracket(m) && idx === 0));
+      return v !== null && v > 0 && Number.isFinite(v) && ((key !== 'ef' && key !== 'ec') || r.E !== null || (isBracket(m) && idx === 0));
     }).map((r) => [r.i, r[key]]) : [];
     return { tone: META[m].tone, pts, hi };
   }
 
-  // Cuatro tarjetas (una por error) dentro de un contenedor; se dibujan con drawErrGrid
+  // Cinco tarjetas (una por error) dentro de un contenedor; se dibujan con drawErrGrid
   function errGridHTML(prefix) {
     const ce = critErr();
     return ERRS.map((e) => `<div class="err-card"><h3>${e.name}${e === ce ? '<span class="crit-tag">criterio</span>' : ''}</h3>
@@ -3181,6 +3207,23 @@ const Sis = (() => {
     return x;
   }
 
+  // Número de condición κ∞(A) = ‖A‖∞·‖A⁻¹‖∞. A⁻¹ se arma columna por columna resolviendo A·c = eⱼ.
+  function condInf(A) {
+    const n = A.length, cols = [];
+    for (let j = 0; j < n; j++) {
+      const c = gaussSolve(A, A.map((_, i) => (i === j ? 1 : 0)));
+      if (!c) return Infinity;                          // A singular
+      cols.push(c);
+    }
+    let invNorm = 0;                                    // ‖A⁻¹‖∞: mayor suma de valores absolutos por fila
+    for (let i = 0; i < n; i++) {
+      let s = 0;
+      for (let j = 0; j < n; j++) s += Math.abs(cols[j][i]);
+      invNorm = Math.max(invNorm, s);
+    }
+    return rowNorm(A) * invNorm;
+  }
+
   // Propiedades que garantizan convergencia
   function properties(A) {
     const n = A.length;
@@ -3207,8 +3250,12 @@ const Sis = (() => {
        er   = ‖x⁽ⁿ⁾ − x⁽ⁿ⁻¹⁾‖∞ / ‖x⁽ⁿ⁾‖∞       relativo
        erp  = ‖(x⁽ⁿ⁾ − x⁽ⁿ⁻¹⁾) ./ x⁽ⁿ⁾‖∞        relativo punto a punto
        er1  = ‖x⁽ⁿ⁾ − x⁽ⁿ⁻¹⁾‖∞ / ‖x⁽ⁿ⁻¹⁾‖∞     relativo respecto a x⁽ⁿ⁻¹⁾
-       erp1 = ‖(x⁽ⁿ⁾ − x⁽ⁿ⁻¹⁾) ./ x⁽ⁿ⁻¹⁾‖∞      relativo punto a punto respecto a x⁽ⁿ⁻¹⁾ */
-  const ERR_KEY = { abs: 'ea', rel: 'er', relp: 'erp', rel1: 'er1', relp1: 'erp1' };
+       erp1 = ‖(x⁽ⁿ⁾ − x⁽ⁿ⁻¹⁾) ./ x⁽ⁿ⁻¹⁾‖∞      relativo punto a punto respecto a x⁽ⁿ⁻¹⁾
+     Además, dos errores basados en el residuo r = b − A·x⁽ⁿ⁾:
+       eres = ‖r‖∞                                residuo
+       ecnd = κ∞(A)·‖r‖∞ / ‖b‖∞                   de condición
+     El de condición acota el error relativo real: ‖x⁽ⁿ⁾ − x*‖ / ‖x*‖ ≤ κ(A)·‖r‖ / ‖b‖. */
+  const ERR_KEY = { abs: 'ea', rel: 'er', relp: 'erp', rel1: 'er1', relp1: 'erp1', res: 'eres', cond: 'ecnd' };
 
   function allErrors(xn, xp, R) {
     if (!xp) return { ea: null, er: null, erp: null, er1: null, erp1: null };
@@ -3232,6 +3279,12 @@ const Sis = (() => {
     const R = { method, status: 'error', message: '', x: null, iterations: 0, rows: [], T: null, C: null, rho: null, errs: null, error: null, extra: {} };
     const { T, C } = iterationMatrices(method, A, b, w);
     R.T = T; R.C = C; R.rho = spectralRadius(T);
+    const kappa = condInf(A), nb = normInf(b);
+    R.cond = kappa;
+    const resErrors = (x) => {
+      const r = normInf(b.map((bi, i) => bi - A[i].reduce((s, a, j) => s + a * x[j], 0)));
+      return { eres: r, ecnd: nb > 0 && Number.isFinite(kappa) ? (kappa * r) / nb : null };
+    };
     const key = ERR_KEY[errType] || 'ea';
     const crit = (e) => {
       if (e[key] === null && e.ea !== null) { R.extra.relFallback = true; return e.ea; }
@@ -3244,7 +3297,7 @@ const Sis = (() => {
       const last = R.rows[R.rows.length - 1];
       if (status !== 'diverged' && last) {
         R.x = last.x; R.error = last.E;
-        R.errs = { ea: last.ea, er: last.er, erp: last.erp, er1: last.er1, erp1: last.erp1 };
+        R.errs = { ea: last.ea, er: last.er, erp: last.erp, er1: last.er1, erp1: last.erp1, eres: last.eres, ecnd: last.ecnd };
       }
       if (R.extra.relFallback) R.message += ' En alguna iteración la norma del denominador fue 0; allí se usó el error absoluto.';
       if (R.extra.ppFallback && (key === 'erp' || key === 'erp1')) R.message += ' En el error punto a punto, las componentes con denominador 0 usan la diferencia absoluta.';
@@ -3252,13 +3305,13 @@ const Sis = (() => {
     };
 
     let x = x0.slice();
-    R.rows.push({ i: 0, x, ...allErrors(x, null, R), E: null });
+    R.rows.push({ i: 0, x, ...allErrors(x, null, R), ...resErrors(x), E: null });
     for (let i = 1; i <= maxIter; i++) {
       const xn = matVec(T, x).map((v, k) => v + C[k]);
       if (xn.some((v) => !Number.isFinite(v)) || normInf(xn) > BIG * Math.max(1, normInf(x0), normInf(C))) {
         return done('diverged', `Las iteraciones divergen en la iteración ${i}: ‖<b>x</b>‖ crece sin control. ${R.rho >= 1 ? `ρ(T) ≈ ${rhoTxt()} ≥ 1, así que el método no converge para este sistema.` : 'Revise la escala de los datos.'}`);
       }
-      const e = allErrors(xn, x, R), err = crit(e);
+      const e = { ...allErrors(xn, x, R), ...resErrors(xn) }, err = crit(e);
       R.rows.push({ i, x: xn, ...e, E: err });
       R.iterations = i;
       x = xn;
@@ -3273,7 +3326,7 @@ const Sis = (() => {
     return done('maxiter', `Se alcanzaron las ${maxIter} iteraciones sin cumplir la tolerancia (último E = ${Core.sci(last.E)}).${why}`);
   }
 
-  return { iterationMatrices, spectralRadius, gaussSolve, properties, solve, normInf };
+  return { iterationMatrices, spectralRadius, gaussSolve, properties, solve, normInf, condInf };
 })();
 
 if (typeof module !== 'undefined') module.exports = Sis;
@@ -3323,13 +3376,15 @@ if (typeof module !== 'undefined') module.exports = Sis;
     },
   };
 
-  // Los cinco errores de c12; k es el campo de cada fila del núcleo
+  // Los cinco errores de c12, más el residuo y el error de condición; k es el campo de cada fila del núcleo
   const SERRS = [
     { id: 'abs', k: 'ea', name: 'Error absoluto', sym: '<i>E</i><sub>abs</sub>', def: NRM(DIFF) },
     { id: 'rel', k: 'er', name: 'Error relativo', sym: '<i>E</i><sub>rel</sub>', def: F(NRM(DIFF), NRM(XN)) },
     { id: 'relp', k: 'erp', name: 'Error relativo punto a punto', sym: '<i>E</i><sub>rel,pp</sub>', def: NRM(`(${DIFF}) ./ ${XN}`) },
     { id: 'rel1', k: 'er1', name: 'Error relativo respecto a x⁽ⁿ⁻¹⁾', sym: '<i>E</i><sub>rel,n−1</sub>', def: F(NRM(DIFF), NRM(XP)) },
     { id: 'relp1', k: 'erp1', name: 'Error relativo punto a punto respecto a x⁽ⁿ⁻¹⁾', sym: '<i>E</i><sub>rel,pp,n−1</sub>', def: NRM(`(${DIFF}) ./ ${XP}`) },
+    { id: 'res', k: 'eres', name: 'Residuo', sym: '<i>E</i><sub>res</sub>', def: NRM(`<b>b</b> − <i>A</i>${XN}`) },
+    { id: 'cond', k: 'ecnd', name: 'Error de condición', sym: '<i>E</i><sub>cond</sub>', def: `κ<sub>∞</sub>(<i>A</i>)·${F(NRM(`<b>b</b> − <i>A</i>${XN}`), NRM('<b>b</b>'))}` },
   ];
   const ERR_IDS = SERRS.map((e) => e.id);
   const critErr = () => SERRS.find((e) => e.id === state.errType) || SERRS[0];
@@ -3479,7 +3534,7 @@ if (typeof module !== 'undefined') module.exports = Sis;
     if (invalid.length) problems.push(`No son números válidos: ${invalid.slice(0, 4).join(', ')}${invalid.length > 4 ? '…' : ''}.`);
     let ok = !empty && !invalid.length;
 
-    let props = null, exact = null, wopt = null;
+    let props = null, exact = null, wopt = null, kappa = null;
     if (ok) {
       const zeros = range(n).filter((i) => A[i][i] === 0);
       if (zeros.length) {
@@ -3494,6 +3549,7 @@ if (typeof module !== 'undefined') module.exports = Sis;
     }
     if (ok) {
       props = S.properties(A);
+      kappa = S.condInf(A);
       if (props.spd && props.tri) {
         const rj = S.spectralRadius(S.iterationMatrices('jacobi', A, b).T);
         if (rj < 1) wopt = 2 / (1 + Math.sqrt(1 - rj * rj));
@@ -3514,16 +3570,25 @@ if (typeof module !== 'undefined') module.exports = Sis;
     if (w.ok && !(w.value > 0 && w.value < 2)) { w.ok = false; w.error = 'debe cumplir 0 < ω < 2; fuera de ese intervalo SOR no converge'; }
     setMsg('w', w.ok ? (wopt ? `ω óptimo para esta matriz ≈ ${C.short(wopt, 5)}.` : '') : `ω: ${w.error}.`, !w.ok);
 
-    renderProps(props, exact, wopt);
+    renderProps(props, exact, wopt, kappa);
     return {
-      ok: ok && tol.ok && maxOk, A, b, x0, exact, props, wopt,
+      ok: ok && tol.ok && maxOk, A, b, x0, exact, props, wopt, kappa,
       tol: tol.ok ? tol.value : null, maxIter: maxOk ? mi : null,
       dec: decOk ? Number(rawDec) : 6, errType: state.errType,
       w: w.ok ? w.value : null, wOk: w.ok,
     };
   }
 
-  function renderProps(p, exact, wopt) {
+  // Qué tan confiable es una solución con residuo pequeño, según κ∞(A)
+  function condNote(k) {
+    const base = `Número de condición: κ<sub>∞</sub>(A) = ‖A‖<sub>∞</sub>·‖A<sup>−1</sup>‖<sub>∞</sub> ≈ ${C.short(k, 4)}.`;
+    if (k < 100) return `${base} A está bien condicionada: si el residuo es pequeño, el error también lo es.`;
+    const lost = Math.round(Math.log10(k));
+    if (k < 1e8) return `${base} A está moderadamente condicionada: el error relativo puede ser hasta κ veces el residuo relativo, así que se pueden perder unas ${lost} cifras.`;
+    return `${base} A está mal condicionada: un residuo pequeño no garantiza una solución precisa; se pueden perder unas ${Math.min(lost, 16)} de las 16 cifras de doble precisión.`;
+  }
+
+  function renderProps(p, exact, wopt, kappa) {
     const el = $('#sis-props');
     if (!p) { el.innerHTML = ''; return; }
     const li = (cls, t) => `<li class="${cls}">${t}</li>`;
@@ -3532,6 +3597,7 @@ if (typeof module !== 'undefined') module.exports = Sis;
       : li('warn', 'A no es estrictamente diagonalmente dominante: la convergencia no está garantizada y depende de ρ(T) en cada método.');
     if (p.spd) h += li('good', 'A es simétrica y definida positiva: Gauss-Seidel y SOR (con 0 &lt; ω &lt; 2) convergen desde cualquier <b>x</b><sup>(0)</sup>.');
     if (wopt) h += li('', `A además es tridiagonal: el ω óptimo de SOR es 2 / (1 + √(1 − ρ(T<sub>J</sub>)²)) ≈ ${C.short(wopt, 5)}.`);
+    if (Number.isFinite(kappa)) h += li(kappa < 100 ? 'good' : kappa < 1e8 ? '' : 'warn', condNote(kappa));
     h += li('', `Solución de referencia por eliminación gaussiana con pivoteo: <b>x</b>* = (${exact.map((v) => C.short(v, 8)).join(', ')}).`);
     el.innerHTML = h;
   }
@@ -3602,6 +3668,7 @@ if (typeof module !== 'undefined') module.exports = Sis;
     const metrics = [
       ['Iteraciones', String(res.iterations)],
       ['Radio espectral <span class="math">ρ(<i>T</i>)</span>', C.short(res.rho, 4)],
+      ['Número de condición <span class="math">κ<sub>∞</sub>(<i>A</i>)</span>', C.short(res.cond, 4)],
       ...SERRS.map((e) => [`${e.name}, <span class="math">${e.sym}</span>${e === ce ? ' <span class="crit-tag">criterio</span>' : ''}`, C.sci(fe[e.k])]),
     ];
     body += `<dl class="metrics">${metrics.map(([k, v]) => `<div><dt>${k}</dt><dd>${v}</dd></div>`).join('')}</dl>`;

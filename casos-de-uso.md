@@ -1,6 +1,7 @@
 # Casos de uso y pruebas: Métodos numéricos
 
 Cada caso se ejecutó en la aplicación (`metodos-numericos.html`, Chrome) el 2026-11-10.
+Actualización del 2026-11-10: se agregó el error de condición en los capítulos 1 y 2 (casos R1.6 y R2.5).
 ✅ = se cumple · ❌ = no se cumple / pendiente.
 
 Para repetir un caso: abra el HTML, elija el tema y la pestaña indicados y escriba la entrada.
@@ -27,7 +28,7 @@ Entrada común: f(x) = `x^3 - 2x - 5`, tolerancia 1e-7, error absoluto. Raíz es
 ### R1.2 Graficar e imprimir la tabla solución
 | Caso | Esperado | Estado |
 |---|---|---|
-| Cualquier método con datos válidos | gráfica con f(x) y los pasos; tabla con n, xₙ, f(xₙ) y los 4 errores | ✅ |
+| Cualquier método con datos válidos | gráfica con f(x) y los pasos; tabla con n, xₙ, f(xₙ) y los 5 errores | ✅ |
 | Botones ⏮ ◀ ▶ ⏭ | la gráfica muestra el paso elegido | ✅ |
 
 ### R1.3 Cualquier función algebraica
@@ -75,10 +76,14 @@ Cada función se resolvió con bisección y con Newton (derivada automática).
 ### R1.6 Gráfica e informe de comparación ante diferentes errores
 | Caso | Esperado | Estado |
 |---|---|---|
-| Pestaña Comparar | tabla de los 7 métodos y 4 gráficas (una por error) contra las iteraciones | ✅ |
-| Cambiar el criterio: absoluto, relativo, relativo a xₙ₋₁, \|f(xₙ)\| | se recalcula y se marca el criterio | ✅ |
+| Pestaña Comparar | tabla de los 7 métodos y 5 gráficas (una por error) contra las iteraciones | ✅ |
+| Cambiar el criterio: absoluto, relativo, relativo a xₙ₋₁, \|f(xₙ)\|, condición | se recalcula y se marca el criterio | ✅ |
 | Botón «Informe PDF» | informe con resumen, gráficas y un capítulo por método | ✅ |
-| Error **de condición** | — | ❌ pendiente |
+| Error de condición E<sub>cond</sub> = \|f(xₙ)\| / \|f′(xₙ)\| | columna en la tabla, gráfica en Comparar, medida en el resumen y en el informe | ✅ |
+| Criterio «Condición», f = `x^3 - 2x - 5` | los 7 métodos llegan a 2.0945514815 (Newton en 3 iteraciones, secante en 5, bisección en 21) | ✅ |
+| Explicación del paso con el criterio «Condición» | muestra E = \|f(xₙ)\| / \|f′(xₙ)\| con los valores reemplazados | ✅ |
+| f′(xₙ) = 0 (f = `x^2 - 1`, x₀ = 0) | la columna E<sub>cond</sub> muestra ∞: el número de condición es infinito | ✅ |
+| Raíz múltiple «(x − 1)³(x − 3)», Newton, x₀ = 0.5, criterio «Condición» | converge a 1 en 36 iteraciones, de forma lineal, como corresponde a una raíz múltiple | ✅ |
 
 ---
 
@@ -100,7 +105,7 @@ Sistema A = [[2, −1, 1], [2, 2, 2], [−1, −1, 2]], b = (−1, 4, −5).
 |---|---|---|
 | Jacobi | ρ(T) ≥ 1, «el método no converge» | ✅ |
 | Gauss-Seidel | ρ(T) < 1, «el método converge», solución encontrada | ✅ |
-| Cualquier método | tabla con x₁…xₙ y los 5 errores por iteración; matrices T y C | ✅ |
+| Cualquier método | tabla con x₁…xₙ y los 7 errores por iteración; matrices T y C | ✅ |
 
 ### R2.3 Matrices de hasta 8 × 8
 | Caso | Esperado | Estado |
@@ -123,9 +128,14 @@ Sistema A = [[2, −1, 1], [2, 2, 2], [−1, −1, 2]], b = (−1, 4, −5).
 ### R2.5 Gráfica e informe de comparación
 | Caso | Esperado | Estado |
 |---|---|---|
-| Pestaña Comparar | tabla de 3 métodos y 5 gráficas de error contra las iteraciones | ✅ |
-| Informe PDF | resumen, gráficas, T, C, ρ y tabla por método | ✅ |
-| Error **de condición** κ(A) | — | ❌ pendiente |
+| Pestaña Comparar | tabla de 3 métodos y 7 gráficas de error contra las iteraciones | ✅ |
+| Informe PDF | resumen, gráficas, T, C, ρ, κ∞(A) y tabla por método | ✅ |
+| κ∞(A) del sistema 4 × 4 de R2.1 | 3.1373, igual que `numpy.linalg.cond(A, inf)`; aparece en las propiedades del sistema, en el resultado y en el informe | ✅ |
+| Residuo E<sub>res</sub> = ‖b − Ax⁽ⁿ⁾‖∞ y error de condición E<sub>cond</sub> = κ∞(A)·‖b − Ax⁽ⁿ⁾‖∞ / ‖b‖∞ | columnas en la tabla, gráficas en Comparar, medidas en el resumen y en el informe | ✅ |
+| Criterio «Error de condición», sistema 4 × 4 de R2.1 | (1, 2, −1, 1): Jacobi en 20 iteraciones, Gauss-Seidel en 8, SOR (ω = 1.1) en 9 | ✅ |
+| Cota del error | en todas las iteraciones, ‖x⁽ⁿ⁾ − x*‖∞ / ‖x*‖∞ ≤ E<sub>cond</sub> (el cociente máximo fue 0.47) | ✅ |
+| Matriz de Hilbert 3 × 3 | κ∞(A) = 748, igual que NumPy; aviso de condicionamiento moderado (se pueden perder unas 3 cifras) | ✅ |
+| b = 0 (‖b‖∞ = 0) con criterio «Error de condición» | se usa el error absoluto y se avisa | ✅ |
 
 ---
 
